@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_DocVerification"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="Camunda Modeler"
+                  exporterVersion="5.20.0">
+  <bpmn:error id="Error_MissingDoc" name="MISSING_CRITICAL_DOCUMENT" errorCode="MISSING_CRITICAL_DOCUMENT" />
+
+  <bpmn:process id="DocumentVerificationProcess" name="Document Verification Child Process" isExecutable="true">
+    <bpmn:startEvent id="Start_DocVerify" name="Documents Received">
+      <bpmn:outgoing>Flow_StartToVerify</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <!-- Sequential Multi-Instance Task to verify each document individually -->
+    <bpmn:serviceTask id="Task_VerifyDocumentSeq" name="Verify Document Item (Sequential Multi-Instance)">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="verify-document" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= doc" target="currentDocument" />
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:output source="= verificationResult" target="docVerificationResult" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StartToVerify</bpmn:incoming>
+      <bpmn:outgoing>Flow_VerifyToEnd</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="true">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="= documents" inputElement="doc" outputCollection="documentResults" outputElement="= docVerificationResult" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+
+    <!-- Error Boundary Event catching missing critical document -->
+    <bpmn:boundaryEvent id="Boundary_MissingDocError" name="Critical Doc Missing" attachedToRef="Task_VerifyDocumentSeq">
+      <bpmn:outgoing>Flow_ErrorToEnd</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_1" errorRef="Error_MissingDoc" />
+    </bpmn:boundaryEvent>
+
+    <bpmn:endEvent id="End_DocVerifySuccess" name="All Documents Verified">
+      <bpmn:incoming>Flow_VerifyToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="End_DocVerificationFailed" name="Verification Terminated">
+      <bpmn:incoming>Flow_ErrorToEnd</bpmn:incoming>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_2" errorRef="Error_MissingDoc" />
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_StartToVerify" sourceRef="Start_DocVerify" targetRef="Task_VerifyDocumentSeq" />
+    <bpmn:sequenceFlow id="Flow_VerifyToEnd" sourceRef="Task_VerifyDocumentSeq" targetRef="End_DocVerifySuccess" />
+    <bpmn:sequenceFlow id="Flow_ErrorToEnd" sourceRef="Boundary_MissingDocError" targetRef="End_DocVerificationFailed" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_DocVerification">
+    <bpmndi:BPMNPlane id="BPMNPlane_DocVerification" bpmnElement="DocumentVerificationProcess">
+      <bpmndi:BPMNShape id="_BPMNShape_Start_DocVerify" bpmnElement="Start_DocVerify">
+        <dc:Bounds x="160" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="150" y="145" width="56" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_VerifyDocumentSeq" bpmnElement="Task_VerifyDocumentSeq">
+        <dc:Bounds x="260" y="80" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_DocVerifySuccess" bpmnElement="End_DocVerifySuccess">
+        <dc:Bounds x="482" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="463" y="145" width="75" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_DocVerificationFailed" bpmnElement="End_DocVerificationFailed">
+        <dc:Bounds x="482" y="222" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="471" y="265" width="59" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Boundary_MissingDocError" bpmnElement="Boundary_MissingDocError">
+        <dc:Bounds x="322" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="350" y="176" width="60" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_StartToVerify_di" bpmnElement="Flow_StartToVerify">
+        <di:waypoint x="196" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_VerifyToEnd_di" bpmnElement="Flow_VerifyToEnd">
+        <di:waypoint x="420" y="120" />
+        <di:waypoint x="482" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ErrorToEnd_di" bpmnElement="Flow_ErrorToEnd">
+        <di:waypoint x="340" y="178" />
+        <di:waypoint x="340" y="240" />
+        <di:waypoint x="482" y="240" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

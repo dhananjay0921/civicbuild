@@ -1,0 +1,87 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: civicbuild-backend
+  profiles:
+    active: dev
+
+  datasource:
+    url: jdbc:h2:mem:civicbuild_db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL
+    driverClassName: org.h2.Driver
+    username: sa
+    password: 
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+
+# Camunda 8 Zeebe Configuration
+zeebe:
+  client:
+    enabled: ${ZEEBE_CLIENT_ENABLED:false}
+    broker:
+      gateway-address: ${ZEEBE_GATEWAY_ADDRESS:127.0.0.1:26500}
+    security:
+      plaintext: true
+    worker:
+      default-name: civicbuild-worker
+      threads: 4
+
+# CivicBuild Application Settings
+civicbuild:
+  jwt:
+    secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+    expiration-ms: 86400000 # 24 hours
+  storage:
+    upload-dir: ${UPLOAD_DIR:./uploads}
+  permits:
+    output-dir: ${PERMITS_DIR:./generated-permits}
+  fees:
+    residential-base: 5000.0
+    residential-per-sqft: 2.5
+    residential-floor-surcharge: 1500.0
+    commercial-base: 15000.0
+    commercial-per-sqft: 6.0
+    commercial-floor-surcharge: 3500.0
+    industrial-base: 25000.0
+    industrial-per-sqft: 8.0
+    industrial-floor-surcharge: 5000.0
+    institutional-base: 10000.0
+    institutional-per-sqft: 4.0
+    institutional-floor-surcharge: 2000.0
+
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/civicbuild}
+    username: ${SPRING_DATASOURCE_USERNAME:civic_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:civic_pass}
+    driverClassName: org.postgresql.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+zeebe:
+  client:
+    enabled: ${ZEEBE_CLIENT_ENABLED:true}
+    broker:
+      gateway-address: ${ZEEBE_GATEWAY_ADDRESS:zeebe:26500}

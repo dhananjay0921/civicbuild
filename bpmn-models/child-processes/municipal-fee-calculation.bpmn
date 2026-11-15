@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_MunicipalFeeCalculation"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="Camunda Modeler"
+                  exporterVersion="5.20.0">
+  <bpmn:process id="MunicipalFeeCalculationProcess" name="Municipal Fee Calculation Child Process" isExecutable="true">
+    <bpmn:startEvent id="Start_FeeCalculation" name="Calculate Fee Request">
+      <bpmn:outgoing>Flow_StartToCalc</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:serviceTask id="Task_CalculateFee" name="Calculate Municipal Fee Service">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="calculate-municipal-fee" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= buildingType" target="buildingType" />
+          <zeebe:input source="= plotArea" target="plotArea" />
+          <zeebe:input source="= builtUpArea" target="builtUpArea" />
+          <zeebe:input source="= numberOfFloors" target="numberOfFloors" />
+          <zeebe:output source="= totalFee" target="feeAmount" />
+          <zeebe:output source="= feeBreakdown" target="feeBreakdown" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StartToCalc</bpmn:incoming>
+      <bpmn:outgoing>Flow_CalcToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="End_FeeCalculated" name="Fee Computed">
+      <bpmn:incoming>Flow_CalcToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_StartToCalc" sourceRef="Start_FeeCalculation" targetRef="Task_CalculateFee" />
+    <bpmn:sequenceFlow id="Flow_CalcToEnd" sourceRef="Task_CalculateFee" targetRef="End_FeeCalculated" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_FeeCalculation">
+    <bpmndi:BPMNPlane id="BPMNPlane_FeeCalculation" bpmnElement="MunicipalFeeCalculationProcess">
+      <bpmndi:BPMNShape id="_BPMNShape_Start_FeeCalculation" bpmnElement="Start_FeeCalculation">
+        <dc:Bounds x="160" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="145" y="145" width="67" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_CalculateFee" bpmnElement="Task_CalculateFee">
+        <dc:Bounds x="260" y="80" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_FeeCalculated" bpmnElement="End_FeeCalculated">
+        <dc:Bounds x="482" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="464" y="145" width="73" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_StartToCalc_di" bpmnElement="Flow_StartToCalc">
+        <di:waypoint x="196" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_CalcToEnd_di" bpmnElement="Flow_CalcToEnd">
+        <di:waypoint x="420" y="120" />
+        <di:waypoint x="482" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

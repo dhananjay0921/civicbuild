@@ -1,0 +1,610 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_BuildingPermit"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="Camunda Modeler"
+                  exporterVersion="5.20.0">
+
+  <bpmn:error id="Error_MissingCriticalDoc" name="MISSING_CRITICAL_DOCUMENT" errorCode="MISSING_CRITICAL_DOCUMENT" />
+
+  <bpmn:process id="BuildingPermitApprovalProcess" name="Municipal Building Permit Approval Process" isExecutable="true">
+    
+    <!-- STEP 1: START EVENT -->
+    <bpmn:startEvent id="Start_ApplicationSubmitted" name="Application Submitted">
+      <bpmn:outgoing>Flow_StartToValidate</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <!-- STEP 2: APPLICATION VALIDATION -->
+    <bpmn:serviceTask id="Task_ValidateApplication" name="Validate Application Structure">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="validate-application" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= buildingType" target="buildingType" />
+          <zeebe:input source="= plotArea" target="plotArea" />
+          <zeebe:output source="= isValid" target="isApplicationValid" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StartToValidate</bpmn:incoming>
+      <bpmn:outgoing>Flow_ValidateToLandRegistry</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- STEP 2b: LAND REGISTRY CONNECTOR / MOCK SERVICE -->
+    <bpmn:serviceTask id="Task_VerifyLandRegistry" name="Verify Land Registry Credentials">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="verify-land-registry" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= surveyNumber" target="surveyNumber" />
+          <zeebe:output source="= isTitleClear" target="isTitleClear" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_ValidateToLandRegistry</bpmn:incoming>
+      <bpmn:outgoing>Flow_LandToDocCall</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- STEP 3: CALL ACTIVITY - DOCUMENT VERIFICATION -->
+    <bpmn:callActivity id="CallActivity_DocumentVerification" name="Verify Checklist (DocumentVerificationProcess)">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="DocumentVerificationProcess" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= documents" target="documents" />
+          <zeebe:output source="= documentResults" target="documentResults" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_LandToDocCall</bpmn:incoming>
+      <bpmn:outgoing>Flow_DocCallToDeptReviews</bpmn:outgoing>
+    </bpmn:callActivity>
+
+    <!-- ERROR BOUNDARY EVENT ON CALL ACTIVITY -->
+    <bpmn:boundaryEvent id="Boundary_DocVerificationError" name="Critical Document Missing" attachedToRef="CallActivity_DocumentVerification">
+      <bpmn:outgoing>Flow_DocErrorToReject</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ErrorEventDefinition_Doc" errorRef="Error_MissingCriticalDoc" />
+    </bpmn:boundaryEvent>
+
+    <!-- ERROR PATH -->
+    <bpmn:serviceTask id="Task_RejectOnDocError" name="Mark Application Document Rejected">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="update-application-status" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= &quot;REJECTED&quot;" target="status" />
+          <zeebe:input source="= &quot;Mandatory statutory document check failed&quot;" target="reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_DocErrorToReject</bpmn:incoming>
+      <bpmn:outgoing>Flow_DocRejectToNotify</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_NotifyDocRejection" name="Notify Applicant of Rejection">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="send-notification" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= &quot;REJECTED&quot;" target="notificationType" />
+          <zeebe:input source="= recipientEmail" target="recipientEmail" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_DocRejectToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifyToEndReject1</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="End_RejectedDocumentError" name="Rejected (Missing Documents)">
+      <bpmn:incoming>Flow_NotifyToEndReject1</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- STEP 4: PARALLEL MULTI-INSTANCE DEPARTMENT REVIEWS -->
+    <bpmn:subProcess id="SubProcess_DepartmentReviews" name="Parallel Departmental Review Process">
+      <bpmn:incoming>Flow_DocCallToDeptReviews</bpmn:incoming>
+      <bpmn:outgoing>Flow_DeptReviewsToGateway</bpmn:outgoing>
+
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="= departmentList" inputElement="currentDept" outputCollection="departmentReviews" outputElement="= deptReviewResult" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+
+      <bpmn:startEvent id="Start_DeptReview" name="Department Review Started">
+        <bpmn:outgoing>Flow_SubStartToUserTask</bpmn:outgoing>
+      </bpmn:startEvent>
+
+      <bpmn:userTask id="Task_OfficerReview" name="Department Officer Review Task">
+        <bpmn:extensionElements>
+          <zeebe:ioMapping>
+            <zeebe:input source="= currentDept" target="assignedDepartment" />
+            <zeebe:input source="= applicationId" target="applicationId" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_SubStartToUserTask</bpmn:incoming>
+        <bpmn:incoming>Flow_RevisionBackToReview</bpmn:incoming>
+        <bpmn:outgoing>Flow_UserTaskToDeptDecision</bpmn:outgoing>
+      </bpmn:userTask>
+
+      <!-- Non-Interrupting Timer Boundary Event: Overdue Review Escalation -->
+      <bpmn:boundaryEvent id="Boundary_ReviewTimer" name="SLA 48h Overdue Timer" cancelActivity="false" attachedToRef="Task_OfficerReview">
+        <bpmn:outgoing>Flow_TimerToEscalate</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="TimerEventDefinition_Review">
+          <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT48H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+
+      <bpmn:serviceTask id="Task_EscalateOverdueReview" name="Escalate Overdue Review to Admin">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="handle-review-timeout" />
+          <zeebe:ioMapping>
+            <zeebe:input source="= applicationId" target="applicationId" />
+            <zeebe:input source="= currentDept" target="overdueDepartment" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>Flow_TimerToEscalate</bpmn:incoming>
+        <bpmn:outgoing>Flow_EscalateToEnd</bpmn:outgoing>
+      </bpmn:serviceTask>
+
+      <bpmn:endEvent id="End_EscalationDispatched" name="Escalation Dispatched">
+        <bpmn:incoming>Flow_EscalateToEnd</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <!-- Exclusive Gateway on Department Decision -->
+      <bpmn:exclusiveGateway id="Gateway_DeptDecision" name="Officer Decision?" default="Flow_DecisionApproved">
+        <bpmn:incoming>Flow_UserTaskToDeptDecision</bpmn:incoming>
+        <bpmn:outgoing>Flow_DecisionApproved</bpmn:outgoing>
+        <bpmn:outgoing>Flow_DecisionRevision</bpmn:outgoing>
+        <bpmn:outgoing>Flow_DecisionRejected</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+
+      <bpmn:endEvent id="End_DeptApproved" name="Dept Approved">
+        <bpmn:incoming>Flow_DecisionApproved</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <bpmn:endEvent id="End_DeptRejected" name="Dept Rejected">
+        <bpmn:incoming>Flow_DecisionRejected</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <!-- STEP 5: EMBEDDED SUB-PROCESS FOR REVISION -->
+      <bpmn:subProcess id="BlueprintRevisionProcess" name="Blueprint Revision Sub-Process">
+        <bpmn:incoming>Flow_DecisionRevision</bpmn:incoming>
+        <bpmn:outgoing>Flow_RevisionBackToReview</bpmn:outgoing>
+
+        <bpmn:startEvent id="Start_Revision" name="Revision Triggered">
+          <bpmn:outgoing>Flow_RevStartToStatus</bpmn:outgoing>
+        </bpmn:startEvent>
+
+        <bpmn:serviceTask id="Task_SetRevisionStatus" name="Set Status REVISION_REQUESTED">
+          <bpmn:extensionElements>
+            <zeebe:taskDefinition type="update-application-status" />
+            <zeebe:ioMapping>
+              <zeebe:input source="= applicationId" target="applicationId" />
+              <zeebe:input source="= &quot;REVISION_REQUESTED&quot;" target="status" />
+            </zeebe:ioMapping>
+          </bpmn:extensionElements>
+          <bpmn:incoming>Flow_RevStartToStatus</bpmn:incoming>
+          <bpmn:outgoing>Flow_StatusToNotifyRev</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:serviceTask id="Task_NotifyRevision" name="Notify Applicant for Revision">
+          <bpmn:extensionElements>
+            <zeebe:taskDefinition type="send-notification" />
+            <zeebe:ioMapping>
+              <zeebe:input source="= applicationId" target="applicationId" />
+              <zeebe:input source="= &quot;REVISION_REQUESTED&quot;" target="notificationType" />
+              <zeebe:input source="= recipientEmail" target="recipientEmail" />
+            </zeebe:ioMapping>
+          </bpmn:extensionElements>
+          <bpmn:incoming>Flow_StatusToNotifyRev</bpmn:incoming>
+          <bpmn:outgoing>Flow_NotifyToUpload</bpmn:outgoing>
+        </bpmn:serviceTask>
+
+        <bpmn:userTask id="Task_UploadRevisedBlueprint" name="Applicant Uploads Corrected Blueprint">
+          <bpmn:extensionElements>
+            <zeebe:ioMapping>
+              <zeebe:input source="= applicationId" target="applicationId" />
+            </zeebe:ioMapping>
+          </bpmn:extensionElements>
+          <bpmn:incoming>Flow_NotifyToUpload</bpmn:incoming>
+          <bpmn:outgoing>Flow_UploadToRevCheck</bpmn:outgoing>
+        </bpmn:userTask>
+
+        <bpmn:exclusiveGateway id="Gateway_RevisionLimit" name="Revision Count &lt;= 3?">
+          <bpmn:incoming>Flow_UploadToRevCheck</bpmn:incoming>
+          <bpmn:outgoing>Flow_RevLimitValid</bpmn:outgoing>
+          <bpmn:outgoing>Flow_RevLimitExceeded</bpmn:outgoing>
+        </bpmn:exclusiveGateway>
+
+        <bpmn:endEvent id="End_RevisionSubmitted" name="Revision Complete">
+          <bpmn:incoming>Flow_RevLimitValid</bpmn:incoming>
+        </bpmn:endEvent>
+
+        <bpmn:endEvent id="End_RevisionExceeded" name="Revision Limit Exceeded">
+          <bpmn:incoming>Flow_RevLimitExceeded</bpmn:incoming>
+        </bpmn:endEvent>
+
+        <bpmn:sequenceFlow id="Flow_RevStartToStatus" sourceRef="Start_Revision" targetRef="Task_SetRevisionStatus" />
+        <bpmn:sequenceFlow id="Flow_StatusToNotifyRev" sourceRef="Task_SetRevisionStatus" targetRef="Task_NotifyRevision" />
+        <bpmn:sequenceFlow id="Flow_NotifyToUpload" sourceRef="Task_NotifyRevision" targetRef="Task_UploadRevisedBlueprint" />
+        <bpmn:sequenceFlow id="Flow_UploadToRevCheck" sourceRef="Task_UploadRevisedBlueprint" targetRef="Gateway_RevisionLimit" />
+        <bpmn:sequenceFlow id="Flow_RevLimitValid" name="Valid cycle" sourceRef="Gateway_RevisionLimit" targetRef="End_RevisionSubmitted">
+          <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= revisionCount &lt;= 3</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+        <bpmn:sequenceFlow id="Flow_RevLimitExceeded" name="Limit exceeded" sourceRef="Gateway_RevisionLimit" targetRef="End_RevisionExceeded">
+          <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= revisionCount &gt; 3</bpmn:conditionExpression>
+        </bpmn:sequenceFlow>
+      </bpmn:subProcess>
+
+      <bpmn:sequenceFlow id="Flow_SubStartToUserTask" sourceRef="Start_DeptReview" targetRef="Task_OfficerReview" />
+      <bpmn:sequenceFlow id="Flow_UserTaskToDeptDecision" sourceRef="Task_OfficerReview" targetRef="Gateway_DeptDecision" />
+      <bpmn:sequenceFlow id="Flow_TimerToEscalate" sourceRef="Boundary_ReviewTimer" targetRef="Task_EscalateOverdueReview" />
+      <bpmn:sequenceFlow id="Flow_EscalateToEnd" sourceRef="Task_EscalateOverdueReview" targetRef="End_EscalationDispatched" />
+      <bpmn:sequenceFlow id="Flow_DecisionApproved" name="Approved" sourceRef="Gateway_DeptDecision" targetRef="End_DeptApproved" />
+      <bpmn:sequenceFlow id="Flow_DecisionRevision" name="Revision Requested" sourceRef="Gateway_DeptDecision" targetRef="BlueprintRevisionProcess">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= reviewDecision = &quot;REVISION_REQUESTED&quot;</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_DecisionRejected" name="Rejected" sourceRef="Gateway_DeptDecision" targetRef="End_DeptRejected">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= reviewDecision = &quot;REJECTED&quot;</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_RevisionBackToReview" sourceRef="BlueprintRevisionProcess" targetRef="Task_OfficerReview" />
+    </bpmn:subProcess>
+
+    <!-- STEP 6: CONVERGENCE GATEWAY AFTER ALL 4 REVIEWS -->
+    <bpmn:exclusiveGateway id="Gateway_AllReviewsApproved" name="All 4 Departments Approved?" default="Flow_AnyReviewRejected">
+      <bpmn:incoming>Flow_DeptReviewsToGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_AllApproved</bpmn:outgoing>
+      <bpmn:outgoing>Flow_AnyReviewRejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <!-- PERMANENT REJECTION BRANCH -->
+    <bpmn:serviceTask id="Task_SetDeptRejectedStatus" name="Set Status REJECTED">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="update-application-status" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= &quot;REJECTED&quot;" target="status" />
+          <zeebe:input source="= &quot;One or more departments issued a formal rejection&quot;" target="reason" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_AnyReviewRejected</bpmn:incoming>
+      <bpmn:outgoing>Flow_RejectStatusToNotify</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_NotifyDeptRejection" name="Notify Applicant of Rejection">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="send-notification" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= &quot;REJECTED&quot;" target="notificationType" />
+          <zeebe:input source="= recipientEmail" target="recipientEmail" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_RejectStatusToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifyToEndReject2</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="End_PermanentRejection" name="Application Permanently Rejected">
+      <bpmn:incoming>Flow_NotifyToEndReject2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- STEP 7: CALL ACTIVITY - MUNICIPAL FEE CALCULATION -->
+    <bpmn:callActivity id="CallActivity_MunicipalFeeCalc" name="Compute Statutory Fees (MunicipalFeeCalculationProcess)">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="MunicipalFeeCalculationProcess" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= buildingType" target="buildingType" />
+          <zeebe:input source="= plotArea" target="plotArea" />
+          <zeebe:input source="= builtUpArea" target="builtUpArea" />
+          <zeebe:input source="= numberOfFloors" target="numberOfFloors" />
+          <zeebe:output source="= feeAmount" target="feeAmount" />
+          <zeebe:output source="= feeBreakdown" target="feeBreakdown" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_AllApproved</bpmn:incoming>
+      <bpmn:outgoing>Flow_FeeToPaymentRequest</bpmn:outgoing>
+    </bpmn:callActivity>
+
+    <!-- STEP 8: CREATE PAYMENT REQUEST -->
+    <bpmn:serviceTask id="Task_CreatePaymentRequest" name="Create Payment Request">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="create-payment-request" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= feeAmount" target="amount" />
+          <zeebe:output source="= paymentReference" target="paymentReference" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_FeeToPaymentRequest</bpmn:incoming>
+      <bpmn:outgoing>Flow_PaymentReqToUserPay</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- STEP 9: APPLICANT PAYMENT -->
+    <bpmn:userTask id="Task_ApplicantPayment" name="Applicant Executes Fee Payment">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= feeAmount" target="feeAmount" />
+          <zeebe:input source="= paymentReference" target="paymentReference" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PaymentReqToUserPay</bpmn:incoming>
+      <bpmn:outgoing>Flow_UserPayToConfirmPay</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <!-- STEP 10: CONFIRM PAYMENT -->
+    <bpmn:serviceTask id="Task_ConfirmPayment" name="Confirm Payment via Gateway">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="confirm-payment" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= paymentReference" target="paymentReference" />
+          <zeebe:output source="= paymentStatus" target="paymentStatus" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_UserPayToConfirmPay</bpmn:incoming>
+      <bpmn:outgoing>Flow_ConfirmToGateway</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:exclusiveGateway id="Gateway_PaymentSuccess" name="Payment Succeeded?" default="Flow_PaymentRetry">
+      <bpmn:incoming>Flow_ConfirmToGateway</bpmn:incoming>
+      <bpmn:outgoing>Flow_PaymentSuccess</bpmn:outgoing>
+      <bpmn:outgoing>Flow_PaymentRetry</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <!-- STEP 11: PERMIT GENERATION -->
+    <bpmn:serviceTask id="Task_GeneratePermit" name="Generate Building Permit Certificate">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="generate-permit" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:output source="= permitNumber" target="permitNumber" />
+          <zeebe:output source="= pdfPath" target="pdfPath" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PaymentSuccess</bpmn:incoming>
+      <bpmn:outgoing>Flow_PermitToNotifyCall</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- STEP 12: CALL ACTIVITY - PERMIT NOTIFICATION -->
+    <bpmn:callActivity id="CallActivity_PermitNotification" name="Send Approval Notice (PermitNotificationProcess)">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="PermitNotificationProcess" propagateAllChildVariables="false" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= &quot;PERMIT_APPROVED&quot;" target="notificationType" />
+          <zeebe:input source="= recipientEmail" target="recipientEmail" />
+          <zeebe:input source="= permitNumber" target="permitNumber" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_PermitToNotifyCall</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifyToEndSuccess</bpmn:outgoing>
+    </bpmn:callActivity>
+
+    <!-- FINAL SUCCESS END EVENT -->
+    <bpmn:endEvent id="End_PermitIssued" name="Permit Approved and Issued">
+      <bpmn:incoming>Flow_NotifyToEndSuccess</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- MAIN PROCESS FLOWS -->
+    <bpmn:sequenceFlow id="Flow_StartToValidate" sourceRef="Start_ApplicationSubmitted" targetRef="Task_ValidateApplication" />
+    <bpmn:sequenceFlow id="Flow_ValidateToLandRegistry" sourceRef="Task_ValidateApplication" targetRef="Task_VerifyLandRegistry" />
+    <bpmn:sequenceFlow id="Flow_LandToDocCall" sourceRef="Task_VerifyLandRegistry" targetRef="CallActivity_DocumentVerification" />
+    <bpmn:sequenceFlow id="Flow_DocCallToDeptReviews" sourceRef="CallActivity_DocumentVerification" targetRef="SubProcess_DepartmentReviews" />
+    <bpmn:sequenceFlow id="Flow_DocErrorToReject" sourceRef="Boundary_DocVerificationError" targetRef="Task_RejectOnDocError" />
+    <bpmn:sequenceFlow id="Flow_DocRejectToNotify" sourceRef="Task_RejectOnDocError" targetRef="Task_NotifyDocRejection" />
+    <bpmn:sequenceFlow id="Flow_NotifyToEndReject1" sourceRef="Task_NotifyDocRejection" targetRef="End_RejectedDocumentError" />
+
+    <bpmn:sequenceFlow id="Flow_DeptReviewsToGateway" sourceRef="SubProcess_DepartmentReviews" targetRef="Gateway_AllReviewsApproved" />
+    <bpmn:sequenceFlow id="Flow_AllApproved" name="All 4 Approved" sourceRef="Gateway_AllReviewsApproved" targetRef="CallActivity_MunicipalFeeCalc">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= every review in departmentReviews satisfies review.status = &quot;APPROVED&quot;</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_AnyReviewRejected" name="Any Rejected" sourceRef="Gateway_AllReviewsApproved" targetRef="Task_SetDeptRejectedStatus" />
+    <bpmn:sequenceFlow id="Flow_RejectStatusToNotify" sourceRef="Task_SetDeptRejectedStatus" targetRef="Task_NotifyDeptRejection" />
+    <bpmn:sequenceFlow id="Flow_NotifyToEndReject2" sourceRef="Task_NotifyDeptRejection" targetRef="End_PermanentRejection" />
+
+    <bpmn:sequenceFlow id="Flow_FeeToPaymentRequest" sourceRef="CallActivity_MunicipalFeeCalc" targetRef="Task_CreatePaymentRequest" />
+    <bpmn:sequenceFlow id="Flow_PaymentReqToUserPay" sourceRef="Task_CreatePaymentRequest" targetRef="Task_ApplicantPayment" />
+    <bpmn:sequenceFlow id="Flow_UserPayToConfirmPay" sourceRef="Task_ApplicantPayment" targetRef="Task_ConfirmPayment" />
+    <bpmn:sequenceFlow id="Flow_ConfirmToGateway" sourceRef="Task_ConfirmPayment" targetRef="Gateway_PaymentSuccess" />
+    <bpmn:sequenceFlow id="Flow_PaymentSuccess" name="Payment Confirmed" sourceRef="Gateway_PaymentSuccess" targetRef="Task_GeneratePermit">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= paymentStatus = &quot;SUCCESS&quot;</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_PaymentRetry" name="Payment Failed / Retry" sourceRef="Gateway_PaymentSuccess" targetRef="Task_ApplicantPayment" />
+    <bpmn:sequenceFlow id="Flow_PermitToNotifyCall" sourceRef="Task_GeneratePermit" targetRef="CallActivity_PermitNotification" />
+    <bpmn:sequenceFlow id="Flow_NotifyToEndSuccess" sourceRef="CallActivity_PermitNotification" targetRef="End_PermitIssued" />
+
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_MainPermit">
+    <bpmndi:BPMNPlane id="BPMNPlane_MainPermit" bpmnElement="BuildingPermitApprovalProcess">
+      <bpmndi:BPMNShape id="_BPMNShape_Start_ApplicationSubmitted" bpmnElement="Start_ApplicationSubmitted">
+        <dc:Bounds x="152" y="242" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="142" y="285" width="56" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_ValidateApplication" bpmnElement="Task_ValidateApplication">
+        <dc:Bounds x="240" y="220" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_VerifyLandRegistry" bpmnElement="Task_VerifyLandRegistry">
+        <dc:Bounds x="410" y="220" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_CallActivity_DocumentVerification" bpmnElement="CallActivity_DocumentVerification">
+        <dc:Bounds x="580" y="220" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Boundary_DocVerificationError" bpmnElement="Boundary_DocVerificationError">
+        <dc:Bounds x="642" y="282" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="668" y="325" width="87" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_RejectOnDocError" bpmnElement="Task_RejectOnDocError">
+        <dc:Bounds x="610" y="380" width="120" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_NotifyDocRejection" bpmnElement="Task_NotifyDocRejection">
+        <dc:Bounds x="770" y="380" width="120" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_RejectedDocumentError" bpmnElement="End_RejectedDocumentError">
+        <dc:Bounds x="932" y="397" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="922" y="440" width="57" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_SubProcess_DepartmentReviews" bpmnElement="SubProcess_DepartmentReviews" isExpanded="true">
+        <dc:Bounds x="780" y="80" width="650" height="260" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Start_DeptReview" bpmnElement="Start_DeptReview">
+        <dc:Bounds x="802" y="152" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_OfficerReview" bpmnElement="Task_OfficerReview">
+        <dc:Bounds x="880" y="130" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Boundary_ReviewTimer" bpmnElement="Boundary_ReviewTimer">
+        <dc:Bounds x="932" y="192" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_EscalateOverdueReview" bpmnElement="Task_EscalateOverdueReview">
+        <dc:Bounds x="910" y="250" width="120" height="60" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_EscalationDispatched" bpmnElement="End_EscalationDispatched">
+        <dc:Bounds x="1062" y="262" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Gateway_DeptDecision" bpmnElement="Gateway_DeptDecision" isMarkerVisible="true">
+        <dc:Bounds x="1055" y="145" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_DeptApproved" bpmnElement="End_DeptApproved">
+        <dc:Bounds x="1352" y="112" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_DeptRejected" bpmnElement="End_DeptRejected">
+        <dc:Bounds x="1352" y="202" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_BlueprintRevisionProcess" bpmnElement="BlueprintRevisionProcess" isExpanded="false">
+        <dc:Bounds x="1160" y="135" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Gateway_AllReviewsApproved" bpmnElement="Gateway_AllReviewsApproved" isMarkerVisible="true">
+        <dc:Bounds x="1475" y="185" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_SetDeptRejectedStatus" bpmnElement="Task_SetDeptRejectedStatus">
+        <dc:Bounds x="1560" y="270" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_NotifyDeptRejection" bpmnElement="Task_NotifyDeptRejection">
+        <dc:Bounds x="1720" y="270" width="130" height="70" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_PermanentRejection" bpmnElement="End_PermanentRejection">
+        <dc:Bounds x="1882" y="287" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_CallActivity_MunicipalFeeCalc" bpmnElement="CallActivity_MunicipalFeeCalc">
+        <dc:Bounds x="1570" y="120" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_CreatePaymentRequest" bpmnElement="Task_CreatePaymentRequest">
+        <dc:Bounds x="1740" y="120" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_ApplicantPayment" bpmnElement="Task_ApplicantPayment">
+        <dc:Bounds x="1900" y="120" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_ConfirmPayment" bpmnElement="Task_ConfirmPayment">
+        <dc:Bounds x="2060" y="120" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Gateway_PaymentSuccess" bpmnElement="Gateway_PaymentSuccess" isMarkerVisible="true">
+        <dc:Bounds x="2225" y="135" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_GeneratePermit" bpmnElement="Task_GeneratePermit">
+        <dc:Bounds x="2310" y="120" width="130" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_CallActivity_PermitNotification" bpmnElement="CallActivity_PermitNotification">
+        <dc:Bounds x="2470" y="120" width="140" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_PermitIssued" bpmnElement="End_PermitIssued">
+        <dc:Bounds x="2652" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="2631" y="185" width="79" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_StartToValidate_di" bpmnElement="Flow_StartToValidate">
+        <di:waypoint x="188" y="260" />
+        <di:waypoint x="240" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ValidateToLandRegistry_di" bpmnElement="Flow_ValidateToLandRegistry">
+        <di:waypoint x="370" y="260" />
+        <di:waypoint x="410" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_LandToDocCall_di" bpmnElement="Flow_LandToDocCall">
+        <di:waypoint x="540" y="260" />
+        <di:waypoint x="580" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_DocCallToDeptReviews_di" bpmnElement="Flow_DocCallToDeptReviews">
+        <di:waypoint x="720" y="260" />
+        <di:waypoint x="780" y="260" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_DocErrorToReject_di" bpmnElement="Flow_DocErrorToReject">
+        <di:waypoint x="660" y="318" />
+        <di:waypoint x="660" y="380" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_DocRejectToNotify_di" bpmnElement="Flow_DocRejectToNotify">
+        <di:waypoint x="730" y="415" />
+        <di:waypoint x="770" y="415" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifyToEndReject1_di" bpmnElement="Flow_NotifyToEndReject1">
+        <di:waypoint x="890" y="415" />
+        <di:waypoint x="932" y="415" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_DeptReviewsToGateway_di" bpmnElement="Flow_DeptReviewsToGateway">
+        <di:waypoint x="1430" y="210" />
+        <di:waypoint x="1475" y="210" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_AllApproved_di" bpmnElement="Flow_AllApproved">
+        <di:waypoint x="1500" y="185" />
+        <di:waypoint x="1500" y="160" />
+        <di:waypoint x="1570" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_AnyReviewRejected_di" bpmnElement="Flow_AnyReviewRejected">
+        <di:waypoint x="1500" y="235" />
+        <di:waypoint x="1500" y="305" />
+        <di:waypoint x="1560" y="305" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_RejectStatusToNotify_di" bpmnElement="Flow_RejectStatusToNotify">
+        <di:waypoint x="1690" y="305" />
+        <di:waypoint x="1720" y="305" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifyToEndReject2_di" bpmnElement="Flow_NotifyToEndReject2">
+        <di:waypoint x="1850" y="305" />
+        <di:waypoint x="1882" y="305" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_FeeToPaymentRequest_di" bpmnElement="Flow_FeeToPaymentRequest">
+        <di:waypoint x="1710" y="160" />
+        <di:waypoint x="1740" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PaymentReqToUserPay_di" bpmnElement="Flow_PaymentReqToUserPay">
+        <di:waypoint x="1870" y="160" />
+        <di:waypoint x="1900" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_UserPayToConfirmPay_di" bpmnElement="Flow_UserPayToConfirmPay">
+        <di:waypoint x="2030" y="160" />
+        <di:waypoint x="2060" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_ConfirmToGateway_di" bpmnElement="Flow_ConfirmToGateway">
+        <di:waypoint x="2190" y="160" />
+        <di:waypoint x="2225" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PaymentSuccess_di" bpmnElement="Flow_PaymentSuccess">
+        <di:waypoint x="2275" y="160" />
+        <di:waypoint x="2310" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PaymentRetry_di" bpmnElement="Flow_PaymentRetry">
+        <di:waypoint x="2250" y="135" />
+        <di:waypoint x="2250" y="80" />
+        <di:waypoint x="1965" y="80" />
+        <di:waypoint x="1965" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_PermitToNotifyCall_di" bpmnElement="Flow_PermitToNotifyCall">
+        <di:waypoint x="2440" y="160" />
+        <di:waypoint x="2470" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifyToEndSuccess_di" bpmnElement="Flow_NotifyToEndSuccess">
+        <di:waypoint x="2610" y="160" />
+        <di:waypoint x="2652" y="160" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

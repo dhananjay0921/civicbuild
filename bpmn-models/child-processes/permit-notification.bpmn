@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_PermitNotification"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  exporter="Camunda Modeler"
+                  exporterVersion="5.20.0">
+  <bpmn:process id="PermitNotificationProcess" name="Permit Notification Child Process" isExecutable="true">
+    <bpmn:startEvent id="Start_Notification" name="Trigger Notification">
+      <bpmn:outgoing>Flow_StartToNotify</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:serviceTask id="Task_SendPermitNotification" name="Dispatch Permit Notification">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="send-notification" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="= applicationId" target="applicationId" />
+          <zeebe:input source="= notificationType" target="notificationType" />
+          <zeebe:input source="= recipientEmail" target="recipientEmail" />
+          <zeebe:input source="= permitNumber" target="permitNumber" />
+          <zeebe:output source="= notificationSent" target="notificationStatus" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_StartToNotify</bpmn:incoming>
+      <bpmn:outgoing>Flow_NotifyToEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:endEvent id="End_NotificationSent" name="Notification Sent">
+      <bpmn:incoming>Flow_NotifyToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_StartToNotify" sourceRef="Start_Notification" targetRef="Task_SendPermitNotification" />
+    <bpmn:sequenceFlow id="Flow_NotifyToEnd" sourceRef="Task_SendPermitNotification" targetRef="End_NotificationSent" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_PermitNotification">
+    <bpmndi:BPMNPlane id="BPMNPlane_PermitNotification" bpmnElement="PermitNotificationProcess">
+      <bpmndi:BPMNShape id="_BPMNShape_Start_Notification" bpmnElement="Start_Notification">
+        <dc:Bounds x="160" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="151" y="145" width="56" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_Task_SendPermitNotification" bpmnElement="Task_SendPermitNotification">
+        <dc:Bounds x="260" y="80" width="160" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="_BPMNShape_End_NotificationSent" bpmnElement="End_NotificationSent">
+        <dc:Bounds x="482" y="102" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="459" y="145" width="83" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_StartToNotify_di" bpmnElement="Flow_StartToNotify">
+        <di:waypoint x="196" y="120" />
+        <di:waypoint x="260" y="120" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_NotifyToEnd_di" bpmnElement="Flow_NotifyToEnd">
+        <di:waypoint x="420" y="120" />
+        <di:waypoint x="482" y="120" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
